@@ -36,7 +36,7 @@ if __name__ == "__main__":
     )
 
     # Dataset prep (parsing SLURP)
-    from prepare import prepare_SLURP  # noqa
+    from prepare_multihead_pred import prepare_SLURP  # noqa
 
     # multi-gpu (ddp) save data preparation
     run_on_main(
