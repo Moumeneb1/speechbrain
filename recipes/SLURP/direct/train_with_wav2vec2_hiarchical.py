@@ -24,6 +24,7 @@ from speechbrain.utils.distributed import run_on_main
 import jsonlines
 import ast
 import pandas as pd
+from time import sleep
 
 
 # Define training procedure
@@ -32,31 +33,43 @@ class SLU(sb.Brain):
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
+        #wavs = wavs.to("cuda:0")
+        #wav_lens = wav_lens.to("cuda:0")
         tokens_intents_bos, tokens_intents_bos_lens = batch.tokens_intents_bos
         tokens_slots_bos, tokens_slots_bos_lens = batch.tokens_slots_bos
+       
+        #tokens_intents_bos, tokens_intents_bos_lens =  tokens_intents_bos.to("cuda:1"), tokens_intents_bos_lens.to("cuda:1")
+        #tokens_slots_bos, tokens_slots_bos_lens = tokens_slots_bos.to("cuda:1"), tokens_slots_bos_lens.to("cuda:1")
 
         # Add augmentation if specified
         if stage == sb.Stage.TRAIN:
             if hasattr(self.hparams, "augmentation"):
                 wavs = self.hparams.augmentation(wavs, wav_lens)
         # wav2vec forward pass
+        #print(next(self.modules.wav2vec2.parameters()).device)
+        #print(wavs.device)
         wav2vec2_out = self.modules.wav2vec2(wavs)
+
         # SLU forward pass
         encoder_out = self.hparams.slu_enc(wav2vec2_out)
         
+        #encoder_out = encoder_out.to("cuda:1")
+
         e_intents_in = self.hparams.output_emb(tokens_intents_bos)
         e_slots_in = self.hparams.output_emb(tokens_slots_bos)
 
-        h_intent, weights_intent = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
+        #h_intent, weights_intent = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
+        h_intent, _ = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
         
         #wieght are vectors or shape [batch,number_of_tokens,timesteps]
-        weights_inversed =  torch.unsqueeze(torch.mean(weights_intent.permute(0,2,1),dim=-1),dim=-1)
+        #weights_inversed =  torch.unsqueeze(torch.mean(weights_intent.permute(0,2,1),dim=-1),dim=-1)
         #weights_inversed is of size [batch,timesteps,1]
         
 
         #sleep(30)
         # we add for each timestep a value wichi is the attention weight used for decoding the intent 
-        h_slots, weights_slots = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
+        #h_slots, weights_slots = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
+        h_slots, _ = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
         #print(encoder_out.shape,weights_slots.shape,h_slots.shape,wav_lens,wav2vec2_out.shape)
 
         # Output layer for seq2seq log-probabilities
@@ -70,6 +83,8 @@ class SLU(sb.Brain):
         p_seq_intent = self.hparams.log_softmax(logits_intent)
         p_seq_slots = self.hparams.log_softmax(logits_slots)
 
+        #batch = batch.to("cuda:0")
+
         # Compute outputs
         if (
             stage == sb.Stage.TRAIN
@@ -78,8 +93,8 @@ class SLU(sb.Brain):
             return p_seq_intent,p_seq_slots, wav_lens
         else:
             p_tokens_intent, scores_intent, context_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens)
-            #print("intent context is",context_intent.shape)
-            p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens,inflate_tensor(context_intent,80,dim=0))
+            print("intent context is",context_intent.shape)
+            p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens,inflate_tensor(context_intent,self.hparams.slu_beam_size,dim=0))
 
             return p_seq_intent,p_seq_slots, wav_lens, p_tokens_intent, p_tokens_slots
 
@@ -96,10 +111,15 @@ class SLU(sb.Brain):
 
         ids = batch.id
         tokens_intents_eos, tokens_intents_eos_lens = batch.tokens_intents_eos
-        tokens_intents, tokens_intents_lens = batch.tokens_intents
-
+        #tokens_intents_eos = tokens_intents_eos.to("cuda:1") 
+        #tokens_intents_eos_lens = tokens_intents_eos_lens.to("cuda:1")
+        #tokens_intents, tokens_intents_lens = batch.tokens_intents
+        #tokens_intents = tokens_intents.to("cuda:1")
+        #tokens_intents_lens = tokens_intents_lens.("cuda:1")
         tokens_slots_eos, tokens_slots_eos_lens = batch.tokens_slots_eos
-        tokens_slots, tokens_slots_lens = batch.tokens_slots
+        #tokens_slots_eos = tokens_slots_eos.to("cuda:1")
+        #tokens_slots_eos_lens = tokens_slots_eos_lens.to("cuda:1")
+        #tokens_slots, tokens_slots_lens = batch.tokens_slots
 
 
         loss_seq_intent = self.hparams.seq_cost(
@@ -133,8 +153,8 @@ class SLU(sb.Brain):
             predicted_semantics = []
 
             for i in range(len(target_intents)):
-                print("aaaaaaaaaaaaaaaaaa","".join(predicted_intents[i])+"".join(predicted_slots[i]))
-                print("bbbbbbbbbbbbbbbbbbb","".join(target_intents[i])+"".join(target_slots[i]))
+                print("".join(predicted_intents[i])+"".join(predicted_slots[i]))
+                print("".join(target_intents[i])+"".join(target_slots[i]))
 
                 #print(" ".join(predicted_slots[i]))
 
@@ -413,11 +433,15 @@ if __name__ == "__main__":
     run_on_main(hparams["pretrainer"].collect_files)
     hparams["pretrainer"].load_collected(device=run_opts["device"])
 
-    hparams["wav2vec2"] = hparams["wav2vec2"].to(run_opts["device"])
+
 
     # freeze the feature extractor part when unfreezing
     if not hparams["freeze_wav2vec2"] and hparams["freeze_wav2vec2_conv"]:
         hparams["wav2vec2"].model.feature_extractor._freeze_parameters()
+
+
+    #hparams["wav2vec2"] = hparams["wav2vec2"].to("cuda:0")
+    #hparams["slu_enc"]= hparams["slu_enc"].to("cuda:0")
 
     # Brain class initialization
     slu_brain = SLU(
@@ -427,6 +451,11 @@ if __name__ == "__main__":
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
     )
+
+    #hparams["output_emb"] = hparams["output_emb"].to("cuda:1")
+    #hparams["dec_intent"] = hparams["dec_intent"].to("cuda:1")
+    #hparams["dec_slots"]= hparams["dec_slots"].to("cuda:1")
+    #hparams["seq_lin"]= hparams["seq_lin"].to("cuda:1")
 
     # adding objects to trainer:
     slu_brain.tokenizer = tokenizer
