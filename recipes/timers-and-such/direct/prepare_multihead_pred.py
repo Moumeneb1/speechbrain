@@ -3,6 +3,7 @@ import shutil
 import logging
 from speechbrain.dataio.dataio import read_audio, merge_csvs
 from speechbrain.utils.data_utils import download_file
+import json
 
 try:
     import pandas as pd
@@ -164,6 +165,12 @@ def prepare_TAS(data_folder, save_folder, type, train_splits, skip_prep=False):
             semantics_format.append("string")
             semantics_opts.append(None)
 
+        semantics = [json.loads(x.replace("'", '"')) for x in semantics]
+        intents = ["{'intent': '" + s["intent"] + "'}" for s in semantics]
+        slots = ["{'slots': '" + str(s["slots"]) + "'}" for s in semantics]
+
+        print(intents[0])
+        print(slots[0])
         new_df = pd.DataFrame(
             {
                 "ID": ID,
@@ -171,6 +178,8 @@ def prepare_TAS(data_folder, save_folder, type, train_splits, skip_prep=False):
                 "wav": wav,
                 "spk_id": spk_id,
                 "semantics": semantics,
+                "intents": intents,
+                "slots": slots,
                 "transcript": transcript,
             }
         )
