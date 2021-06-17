@@ -19,10 +19,12 @@ import sys
 import torch
 import speechbrain as sb
 from hyperpyyaml import load_hyperpyyaml
+from speechbrain.decoders.seq2seq import  inflate_tensor
 from speechbrain.utils.distributed import run_on_main
 import jsonlines
 import ast
 import pandas as pd
+from time import sleep
 
 
 # Define training procedure
@@ -31,37 +33,90 @@ class SLU(sb.Brain):
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
+        id_wav = batch.id
+
+        #wavs = wavs.to("cuda:0")
+        #wav_lens = wav_lens.to("cuda:0")
+        
+        #last
+        #tokens_intents_bos, tokens_intents_bos_lens = batch.tokens_intents_bos
+        #tokens_slots_bos, tokens_slots_bos_lens = batch.tokens_slots_bos
         tokens_bos, tokens_bos_lens = batch.tokens_bos
+        switch_tokens, _ = batch.switch_tokens
+       
+        #tokens_intents_bos, tokens_intents_bos_lens =  tokens_intents_bos.to("cuda:1"), tokens_intents_bos_lens.to("cuda:1")
+        #tokens_slots_bos, tokens_slots_bos_lens = tokens_slots_bos.to("cuda:1"), tokens_slots_bos_lens.to("cuda:1")
 
         # Add augmentation if specified
         if stage == sb.Stage.TRAIN:
             if hasattr(self.hparams, "augmentation"):
                 wavs = self.hparams.augmentation(wavs, wav_lens)
-
-        #  encoder forward pass
+        # wav2vec forward pass
+        #print(next(self.modules.wav2vec2.parameters()).device)
+        #print(wavs.device)
         wav2vec2_out = self.modules.wav2vec2(wavs)
-        # SLU forward pass
+
+        #with open('wav2vec_tensor_length.txt', 'a') as the_file:
+        #    for j,x in enumerate(wav_lens*wav2vec2_out.shape[1]):
+        #        the_file.write(id_wav[j]+','+str(int(x.item())))
+        #        the_file.write('\n')
         
+        # SLU forward pass
         encoder_out = self.hparams.slu_enc(wav2vec2_out)
+        
+        #encoder_out = encoder_out.to("cuda:1")
+
         e_in = self.hparams.output_emb(tokens_bos)
 
-        #decode attentions
-        h, _ = self.hparams.dec(e_in, encoder_out, wav_lens)
-        #decode slots
+        #e_intents_in = self.hparams.output_emb(tokens_intents_bos)
+        #e_slots_in = self.hparams.output_emb(tokens_slots_bos)
 
+        #h_intent, weights_intent = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
+        #h_intent, _ = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
+
+        #h_intent, _ = self.hparams.dec_slots(e_intents_in, encoder_out, wav_lens,context_intent=torch.zeros(self.hparams.batch_size,512).cuda())
+
+        h, _ = self.hparams.dec(e_in, encoder_out, wav_lens, switch_tokens)
+
+        #print(torch.mean(h_intent,dim=1).shape)
+        
+        #wieght are vectors or shape [batch,number_of_tokens,timesteps]
+        #weights_inversed =  torch.unsqueeze(torch.mean(weights_intent.permute(0,2,1),dim=-1),dim=-1)
+        #weights_inversed is of size [batch,timesteps,1]
+        
+
+        #sleep(30)
+        # we add for each timestep a value wichi is the attention weight used for decoding the intent 
+        #h_slots, weights_slots = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
+        
+        #h_slots, _ = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
+        
+        #print(encoder_out.shape,weights_slots.shape,h_slots.shape,wav_lens,wav2vec2_out.shape)
 
         # Output layer for seq2seq log-probabilities
         logits = self.hparams.seq_lin(h)
+
+        #print(logits_intent.shape)
+        
+        #logits_slots = self.hparams.seq_lin_slots(h_slots)
+
+
         p_seq = self.hparams.log_softmax(logits)
+        #p_seq_slots = self.hparams.log_softmax(logits_slots)
+
+        #batch = batch.to("cuda:0")
 
         # Compute outputs
         if (
             stage == sb.Stage.TRAIN
-            #and self.batch_count % show_results_every != 0
+            and self.batch_count % show_results_every != 0
         ):
             return p_seq, wav_lens
         else:
-            p_tokens, scores = self.hparams.beam_searcher(encoder_out, wav_lens)
+            #p_tokens_intent, scores_intent, context_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens,torch.zeros(self.hparams.batch_size,512).cuda())
+            #print("intent context is",context_intent.shape)
+            p_tokens, scores = self.hparams.beam_searcher_slots(encoder_out, wav_lens,14)
+
             return p_seq, wav_lens, p_tokens
 
     def compute_objectives(self, predictions, batch, stage):
@@ -69,7 +124,7 @@ class SLU(sb.Brain):
 
         if (
             stage == sb.Stage.TRAIN
-            #and self.batch_count % show_results_every != 0
+            and self.batch_count % show_results_every != 0
         ):
             p_seq, wav_lens = predictions
         else:
@@ -77,18 +132,31 @@ class SLU(sb.Brain):
 
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
-        tokens, tokens_lens = batch.tokens
+        #tokens_intents_eos = tokens_intents_eos.to("cuda:1") 
+        #tokens_intents_eos_lens = tokens_intents_eos_lens.to("cuda:1")
+        #tokens_intents, tokens_intents_lens = batch.tokens_intents
+        #tokens_intents = tokens_intents.to("cuda:1")
+        #tokens_intents_lens = tokens_intents_lens.("cuda:1")
 
-        loss_seq = self.hparams.seq_cost(
+        #tokens_slots_eos, tokens_slots_eos_lens = batch.tokens_slots_eos
+        
+        #tokens_slots_eos = tokens_slots_eos.to("cuda:1")
+        #tokens_slots_eos_lens = tokens_slots_eos_lens.to("cuda:1")
+        #tokens_slots, tokens_slots_lens = batch.tokens_slots
+
+
+        loss = self.hparams.seq_cost(
             p_seq, tokens_eos, length=tokens_eos_lens
         )
 
-        # (No ctc loss)
-        loss = loss_seq
+        #loss_seq_slots = self.hparams.seq_cost(
+        #    p_seq_slots, tokens_slots_eos, length=tokens_slots_eos_lens
+        #)
 
-        if (stage != sb.Stage.TRAIN):# or (
-            #self.batch_count % show_results_every == 0
-        #):
+        #loss = 0.5*loss_seq_slots + 0.5*loss_seq_intent
+        if (stage != sb.Stage.TRAIN) or (
+            self.batch_count % show_results_every == 0
+        ):
             # Decode token terms to words
             predicted_semantics = [
                 tokenizer.decode_ids(utt_seq).split(" ")
@@ -133,8 +201,8 @@ class SLU(sb.Brain):
     def log_outputs(self, predicted_semantics, target_semantics):
         """ TODO: log these to a file instead of stdout """
         for i in range(len(target_semantics)):
-            print(" ".join(predicted_semantics[i]).replace("|", ","))
-            print(" ".join(target_semantics[i]).replace("|", ","))
+            print("".join(predicted_semantics[i]).replace("|", ","))
+            print("".join(target_semantics[i]).replace("|", ","))
             print("")
 
     def fit_batch(self, batch):
@@ -164,7 +232,7 @@ class SLU(sb.Brain):
 
             self.cer_metric = self.hparams.cer_computer()
             self.wer_metric = self.hparams.error_rate_computer()
-
+            
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
         # Compute/store important stats
@@ -178,13 +246,21 @@ class SLU(sb.Brain):
         # Perform end-of-iteration things, like annealing, logging, etc.
         if stage == sb.Stage.VALID:
             old_lr, new_lr = self.hparams.lr_annealing(stage_stats["WER"])
-            old_lr_wav2vec2, new_lr_wav2vec2 = self.hparams.lr_annealing_wav2vec2(stage_stats["WER"])
+            (
+                old_lr_wav2vec2,
+                new_lr_wav2vec2,
+            ) = self.hparams.lr_annealing_wav2vec2(stage_stats["WER"])
+
             sb.nnet.schedulers.update_learning_rate(self.optimizer, new_lr)
             sb.nnet.schedulers.update_learning_rate(
                 self.wav2vec2_optimizer, new_lr_wav2vec2
             )
             self.hparams.train_logger.log_stats(
-                stats_meta={"epoch": epoch, "lr": old_lr,"wave2vec_lr": old_lr_wav2vec2,},
+                stats_meta={
+                    "epoch": epoch,
+                    "lr": old_lr,
+                    "wave2vec2_lr": old_lr_wav2vec2,
+                },
                 train_stats=self.train_stats,
                 valid_stats=stage_stats,
             )
@@ -265,10 +341,9 @@ def dataio_prepare(hparams):
 
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
 
-    # 3. Define text pipeline:
     @sb.utils.data_pipeline.takes("semantics")
     @sb.utils.data_pipeline.provides(
-        "semantics", "token_list", "tokens_bos", "tokens_eos", "tokens"
+        "semantics", "token_list", "tokens_bos", "switch_tokens", "tokens_eos", "tokens"
     )
     def text_pipeline(semantics):
         yield semantics
@@ -276,6 +351,8 @@ def dataio_prepare(hparams):
         yield tokens_list
         tokens_bos = torch.LongTensor([hparams["bos_index"]] + (tokens_list))
         yield tokens_bos
+        switch_tokens = torch.nonzero(tokens_bos==14)
+        yield switch_tokens
         tokens_eos = torch.LongTensor(tokens_list + [hparams["eos_index"]])
         yield tokens_eos
         tokens = torch.LongTensor(tokens_list)
@@ -283,11 +360,49 @@ def dataio_prepare(hparams):
 
     sb.dataio.dataset.add_dynamic_item(datasets, text_pipeline)
 
-    # 4. Set output:
     sb.dataio.dataset.set_output_keys(
         datasets,
-        ["id", "sig", "semantics", "tokens_bos", "tokens_eos", "tokens"],
+        ["id", "sig", "semantics", "tokens_bos", "tokens_eos", "tokens", "switch_tokens"],
     )
+    # 3. Define text pipeline:
+    #@sb.utils.data_pipeline.takes("intents")
+    #@sb.utils.data_pipeline.provides(
+    #    "intent", "token_intents_list", "tokens_intents_bos", "tokens_intents_eos", "tokens_intents"
+    #)
+    #def text_pipeline_intent(intents):
+    #    yield intents
+    #    tokens_intents_list = tokenizer.encode_as_ids(intents)
+    #    yield tokens_intents_list
+    #    tokens_intents_bos = torch.LongTensor([hparams["bos_index"]] + (tokens_intents_list))
+    #    yield tokens_intents_bos
+    #    tokens_intents_eos = torch.LongTensor(tokens_intents_list + [hparams["eos_index"]])
+    #    yield tokens_intents_eos
+    #    tokens_intents = torch.LongTensor(tokens_intents_list)
+    #    yield tokens_intents
+    
+    #sb.dataio.dataset.add_dynamic_item(datasets, text_pipeline_intent)
+    #@sb.utils.data_pipeline.takes("slots")
+    #@sb.utils.data_pipeline.provides(
+    #    "slots", "token_slots_list", "tokens_slots_bos", "tokens_slots_eos", "tokens_slots"
+    #)
+    #def text_pipeline_slots(slots):
+    #    yield slots
+    #    tokens_slots_list = tokenizer.encode_as_ids(slots)
+    #    yield tokens_slots_list
+    #    tokens_slots_bos = torch.LongTensor([hparams["bos_index_slots"]] + (tokens_slots_list))
+    #    yield tokens_slots_bos
+    #   tokens_slots_eos = torch.LongTensor(tokens_slots_list + [hparams["eos_index"]])
+    #    yield tokens_slots_eos
+    #    tokens_slots = torch.LongTensor(tokens_slots_list)
+    #    yield tokens_slots
+    
+    #sb.dataio.dataset.add_dynamic_item(datasets, text_pipeline_slots)
+
+    # 4. Set output:
+    #sb.dataio.dataset.set_output_keys(
+    #    datasets,
+    #    ["id", "sig", "tokens_slots_bos","tokens_intents_bos", "tokens_slots_eos","tokens_intents_eos", "tokens_slots","tokens_intents","intents","slots"],
+    #)
     return train_data, valid_data, test_data, tokenizer
 
 
@@ -298,7 +413,7 @@ if __name__ == "__main__":
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
 
-    show_results_every = 100  # plots results every N iterations
+    show_results_every = 500  # plots results every N iterations
 
     # If distributed_launch=True then
     # create ddp_group with the right communication protocol
@@ -312,7 +427,7 @@ if __name__ == "__main__":
     )
 
     # Dataset prep (parsing SLURP)
-    from prepare import prepare_SLURP  # noqa
+    from prepare_multihead_pred import prepare_SLURP  # noqa
 
     # multi-gpu (ddp) save data preparation
     run_on_main(
@@ -330,15 +445,19 @@ if __name__ == "__main__":
     (train_set, valid_set, test_set, tokenizer,) = dataio_prepare(hparams)
 
     # We download and pretrain the tokenizer
+    tokenizer.load("results/50_unigram.model")
     #run_on_main(hparams["pretrainer"].collect_files)
     #hparams["pretrainer"].load_collected(device=run_opts["device"])
-    tokenizer.load("results/50_unigram.model")
 
-    hparams["wav2vec2"] = hparams["wav2vec2"].to("cuda:0")
+
 
     # freeze the feature extractor part when unfreezing
     if not hparams["freeze_wav2vec2"] and hparams["freeze_wav2vec2_conv"]:
         hparams["wav2vec2"].model.feature_extractor._freeze_parameters()
+
+
+    #hparams["wav2vec2"] = hparams["wav2vec2"].to("cuda:0")
+    #hparams["slu_enc"]= hparams["slu_enc"].to("cuda:0")
 
     # Brain class initialization
     slu_brain = SLU(
@@ -348,6 +467,11 @@ if __name__ == "__main__":
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
     )
+
+    #hparams["output_emb"] = hparams["output_emb"].to("cuda:1")
+    #hparams["dec_intent"] = hparams["dec_intent"].to("cuda:1")
+    #hparams["dec_slots"]= hparams["dec_slots"].to("cuda:1")
+    #hparams["seq_lin"]= hparams["seq_lin"].to("cuda:1")
 
     # adding objects to trainer:
     slu_brain.tokenizer = tokenizer

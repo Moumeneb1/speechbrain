@@ -10,6 +10,7 @@ import torch
 
 import speechbrain as sb
 from speechbrain.decoders.ctc import CTCPrefixScorer
+from time import sleep
 
 
 class S2SBaseSearcher(torch.nn.Module):
@@ -168,17 +169,12 @@ class S2SGreedySearcher(S2SBaseSearcher):
 
         log_probs_lst = []
         max_decode_steps = int(enc_states.shape[1] * self.max_decode_ratio)
-        memory_array =[]
         for t in range(max_decode_steps):
             log_probs, memory, _ = self.forward_step(
                 inp_tokens, memory, enc_states, enc_lens
             )
-            memory_array.append(memory[1])
-            #print(memory[1].shape)
             log_probs_lst.append(log_probs)
             inp_tokens = log_probs.argmax(dim=-1)
-        
-        context_mean = torch.mean(torch.stack(memory_array,dim=-1),dim=-1)
 
         #print("contextttttttttt",context_mean.shape)
 
@@ -189,7 +185,7 @@ class S2SGreedySearcher(S2SBaseSearcher):
             predictions, eos_id=self.eos_index
         )
 
-        return predictions, scores, context_mean
+        return predictions, scores
 
 
 class S2SRNNGreedySearcher(S2SGreedySearcher):
@@ -246,11 +242,11 @@ class S2SRNNGreedySearcher(S2SGreedySearcher):
         c = torch.zeros(batch_size, self.dec.attn_dim, device=device)
         return hs, c
 
-    def forward_step(self, inp_tokens, memory, enc_states, enc_lens):
+    def forward_step(self, inp_tokens, memory, enc_states, enc_lens,context_intent):
         hs, c = memory
         e = self.emb(inp_tokens)
         dec_out, hs, c, w = self.dec.forward_step(
-            e, hs, c, enc_states, enc_lens
+            e, hs, c, enc_states, enc_lens,context_intent
         )
         log_probs = self.softmax(self.fc(dec_out))
         return log_probs, (hs, c), w
@@ -1171,7 +1167,7 @@ class S2SBeamSearcher2(S2SBaseSearcher):
 
         return topk_hyps, topk_scores, topk_lengths, topk_log_probs
 
-    def forward(self, enc_states, wav_len,context_intent):  # noqa: C901
+    def forward(self, enc_states, wav_len,id_switch):  # noqa: C901
         enc_lens = torch.round(enc_states.shape[1] * wav_len).int()
         device = enc_states.device
         batch_size = enc_states.shape[0]
@@ -1239,14 +1235,23 @@ class S2SBeamSearcher2(S2SBaseSearcher):
         # Initialize the previous attention peak to zero
         # This variable will be used when using_max_attn_shift=True
         prev_attn_peak = torch.zeros(batch_size * self.beam_size, device=device)
-
+        context_saved = torch.zeros(
+            batch_size * self.beam_size, 512, device=enc_states.device
+        )
+        keep_context = torch.ones(batch_size * self.beam_size,device=enc_states.device)
         for t in range(max_decode_steps):
             # terminate condition
             if self._check_full_beams(hyps_and_scores, self.beam_size):
                 break
+            keep_c = ((keep_context * inp_tokens) == id_switch)
+            if keep_c.sum() > 0:
+                for i in range(keep_c.shape[0]):
+                    if keep_c[i]:
+                        keep_context[i]=0
+                        context_saved[i] = memory[1][i]
 
             log_probs, memory, attn = self.forward_step(
-                inp_tokens, memory, enc_states, enc_lens,context_intent
+                inp_tokens, memory, enc_states, enc_lens, context_saved
             )
             log_probs = self.att_weight * log_probs
 
@@ -1556,12 +1561,12 @@ class S2SRNNBeamSearcher(S2SBeamSearcher):
         c = torch.zeros(batch_size, self.dec.attn_dim, device=device)
         return hs, c
 
-    def forward_step(self, inp_tokens, memory, enc_states, enc_lens):
+    def forward_step(self, inp_tokens, memory, enc_states, enc_lens, c1):
         with torch.no_grad():
             hs, c = memory
             e = self.emb(inp_tokens)
             dec_out, hs, c, w = self.dec.forward_step(
-                e, hs, c, enc_states, enc_lens
+                e, hs, c, enc_states, enc_lens, c1
             )
             log_probs = self.softmax(self.fc(dec_out) / self.temperature)
         # average attn weight of heads when attn_type is multiheadlocation
@@ -1662,12 +1667,15 @@ class S2SRNNBeamSearcher2(S2SBeamSearcher2):
         c = torch.zeros(batch_size, self.dec.attn_dim, device=device)
         return hs, c
 
-    def forward_step(self, inp_tokens, memory, enc_states, enc_lens,context_intent):
+    def forward_step(self, inp_tokens, memory, enc_states, enc_lens,context_saved):
         with torch.no_grad():
             hs, c = memory
+            """print(inp_tokens)
+            print(inp_tokens.shape)
+            sleep(10)"""
             e = self.emb(inp_tokens)
             dec_out, hs, c, w = self.dec.forward_step(
-                e, hs, c, enc_states, enc_lens,context_intent
+                e, hs, c, enc_states, enc_lens, context_saved
             )
             log_probs = self.softmax(self.fc(dec_out) / self.temperature)
         # average attn weight of heads when attn_type is multiheadlocation

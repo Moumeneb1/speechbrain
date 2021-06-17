@@ -56,10 +56,10 @@ class SLU(sb.Brain):
         #print(wavs.device)
         wav2vec2_out = self.modules.wav2vec2(wavs)
 
-        with open('wav2vec_tensor_length.txt', 'a') as the_file:
-            for j,x in enumerate(wav_lens*wav2vec2_out.shape[1]):
-                the_file.write(id_wav[j]+','+str(int(x.item())))
-                the_file.write('\n')
+#        with open('wav2vec_tensor_length.txt', 'a') as the_file:
+#            for j,x in enumerate(wav_lens*wav2vec2_out.shape[1]):
+#                the_file.write(id_wav[j]+','+str(int(x.item())))
+#                the_file.write('\n')
         
         # SLU forward pass
         encoder_out = self.hparams.slu_enc(wav2vec2_out)
@@ -67,7 +67,7 @@ class SLU(sb.Brain):
         #encoder_out = encoder_out.to("cuda:1")
 
         e_intents_in = self.hparams.output_emb(tokens_intents_bos)
-        e_slots_in = self.hparams.output_emb(tokens_slots_bos)
+        e_slots_in = self.hparams.output_emb_slots(tokens_slots_bos)
 
         #h_intent, weights_intent = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
         h_intent, _ = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
@@ -80,7 +80,8 @@ class SLU(sb.Brain):
         #sleep(30)
         # we add for each timestep a value wichi is the attention weight used for decoding the intent 
         #h_slots, weights_slots = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
-        h_slots, _ = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
+        #h_slots, _ = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
+        h_slots, _ = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens)
         #print(encoder_out.shape,weights_slots.shape,h_slots.shape,wav_lens,wav2vec2_out.shape)
 
         # Output layer for seq2seq log-probabilities
@@ -103,9 +104,10 @@ class SLU(sb.Brain):
         ):
             return p_seq_intent,p_seq_slots, wav_lens
         else:
-            p_tokens_intent, scores_intent, context_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens)
+            p_tokens_intent, scores_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens)
+            p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens)
             #print("intent context is",context_intent.shape)
-            p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens,inflate_tensor(context_intent.detach(),self.hparams.slu_beam_size,dim=0))
+            #p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens,inflate_tensor(context_intent.detach(),self.hparams.slu_beam_size,dim=0))
 
             return p_seq_intent,p_seq_slots, wav_lens, p_tokens_intent, p_tokens_slots
 
@@ -141,7 +143,7 @@ class SLU(sb.Brain):
             p_seq_slots, tokens_slots_eos, length=tokens_slots_eos_lens
         )
 
-        loss = 0.5*loss_seq_slots + 0.5*loss_seq_intent
+        loss = loss_seq_slots + loss_seq_intent
 
         if (stage != sb.Stage.TRAIN) or (
             self.batch_count % show_results_every == 0

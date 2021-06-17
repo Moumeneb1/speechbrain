@@ -1124,7 +1124,7 @@ class AttentionalRNNDecoder2(nn.Module):
 
         self.rnn = cell_class(**kwargs)
 
-    def forward_step(self, inp, hs, c, enc_states, enc_len,context_intent):
+    def forward_step(self, inp, hs, c, enc_states, enc_len,c_additional):
         """One step of forward pass process.
 
         Arguments
@@ -1157,17 +1157,13 @@ class AttentionalRNNDecoder2(nn.Module):
 
 
         c, w = self.attn(enc_states, enc_len, cell_out)
-        #print("it's the context",c.shape)
-        #print("context intent is",torch.mean(context_intent,dim=1).shape)
-        #print("aaaaaaaaaaaa",c.shape)
-        #print("bbbbbbbbbbbbb",inflate_tensor(context_intent,80,dim=0).shape)
-        #print("ccccccccc",cell_out.shape)
-        dec_out = torch.cat([c, context_intent, cell_out], dim=1)
+        dec_out = torch.cat([c, c_additional, cell_out], dim=1)
+
         dec_out = self.proj(dec_out)
 
         return dec_out, hs, c, w
 
-    def forward(self, inp_tensor, enc_states, wav_len, context_intent = None):
+    def forward(self, inp_tensor, enc_states, wav_len, batch_time_step_switch):
         """This method implements the forward pass of the attentional RNN decoder.
 
         Arguments
@@ -1194,13 +1190,24 @@ class AttentionalRNNDecoder2(nn.Module):
         c = torch.zeros(
             enc_states.shape[0], self.attn_dim, device=enc_states.device
         )
+        context_saved = torch.zeros(
+            enc_states.shape[0], self.attn_dim, device=enc_states.device
+        )
         hs = None
-
         # store predicted tokens
         outputs_lst, attn_lst = [], []
+        full_ok = False
+        nb_batch = enc_states.shape[0]
         for t in range(inp_tensor.shape[1]):
+            if nb_batch !=0:
+                bool_t = (t == batch_time_step_switch)
+                if bool_t.sum() > 0:
+                    for i in range(bool_t.shape[0]):
+                        if bool_t[i]:
+                            context_saved[i] = c[i]
+                            nb_batch -= 1
             outputs, hs, c, w = self.forward_step(
-                inp_tensor[:, t], hs, c, enc_states, enc_len,context_intent
+                inp_tensor[:, t], hs, c, enc_states, enc_len, context_saved
             )
             outputs_lst.append(outputs)
             attn_lst.append(w)

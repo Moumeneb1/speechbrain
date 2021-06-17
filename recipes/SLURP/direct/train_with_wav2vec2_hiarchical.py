@@ -103,7 +103,7 @@ class SLU(sb.Brain):
         ):
             return p_seq_intent,p_seq_slots, wav_lens
         else:
-            p_tokens_intent, scores_intent, context_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens)
+            p_tokens_intent, scores_intent, context_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens,inflate_tensor(torch.mean(h_intent,dim=1),self.hparams.slu_beam_size,dim=0))
             #print("intent context is",context_intent.shape)
             p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens,inflate_tensor(context_intent,self.hparams.slu_beam_size,dim=0))
 
