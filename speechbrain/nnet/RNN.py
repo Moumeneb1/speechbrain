@@ -10,6 +10,8 @@ Authors
 import torch
 import logging
 import torch.nn as nn
+
+import numpy as np
 from speechbrain.nnet.attention import (
     ContentBasedAttention,
     LocationAwareAttention,
@@ -943,9 +945,17 @@ class AttentionalRNNDecoder(nn.Module):
         # store predicted tokens
         outputs_lst, attn_lst = [], []
         for t in range(inp_tensor.shape[1]):
-            outputs, hs, c, w = self.forward_step(
-                inp_tensor[:, t], hs, c, enc_states, enc_len
-            )
+            #stochastic process
+            pred = np.random.uniform(0,1)
+            if pred<0.2 and t>1:
+                outputs, hs, c, w = self.forward_step(
+                    outputs, hs, c, enc_states, enc_len
+                )
+            else: 
+                outputs, hs, c, w = self.forward_step(
+                    inp_tensor[:, t], hs, c, enc_states, enc_len
+                )
+
             outputs_lst.append(outputs)
             attn_lst.append(w)
 
