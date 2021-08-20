@@ -38,6 +38,8 @@ lr_wav2vec2: 0.00001
 token_type: unigram # ["unigram", "bpe", "char"]
 sorting: random
 ckpt_interval_minutes: 15 # save checkpoint every N min
+num_asr_tokens: 1000
+
 
 #freeze all wav2vec2
 freeze_wav2vec2: False
@@ -88,11 +90,11 @@ slu_enc: !new:speechbrain.nnet.containers.Sequential
         input_size: !ref <encoder_dim> * 2
         n_neurons: !ref <encoder_dim>
 
-output_emb: !new:speechbrain.nnet.embedding.Embedding
+output_emb_slu: !new:speechbrain.nnet.embedding.Embedding
     num_embeddings: !ref <output_neurons>
     embedding_dim: !ref <emb_size>
 
-dec: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
+dec_slu: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     enc_dim: !ref <encoder_dim>
     input_size: !ref <emb_size>
     rnn_type: gru
@@ -103,7 +105,12 @@ dec: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     scaling: 1.0
     dropout: 0.0
 
+
 seq_lin: !new:speechbrain.nnet.linear.Linear
+    input_size: !ref <dec_neurons>
+    n_neurons: !ref <output_neurons>
+
+seq_lin_slu: !new:speechbrain.nnet.linear.Linear
     input_size: !ref <dec_neurons>
     n_neurons: !ref <output_neurons>
 
@@ -118,14 +125,50 @@ env_corrupt: !new:speechbrain.lobes.augment.EnvCorrupt
 modules:
     wav2vec2: !ref <wav2vec2>
     slu_enc: !ref <slu_enc>
-    output_emb: !ref <output_emb>
-    dec: !ref <dec>
-    seq_lin: !ref <seq_lin>
+    output_emb_slu: !ref <output_emb_slu>
+    dec_slu: !ref <dec_slu>
+    seq_lin_slu: !ref <seq_lin_slu>
     env_corrupt: !ref <env_corrupt>
 
+
+nlu_enc: !new:speechbrain.nnet.containers.Sequential
+    input_shape: [null, null, !ref <emb_size>]
+    lstm: !new:speechbrain.nnet.RNN.LSTM
+        input_size: !ref <emb_size>
+        bidirectional: True
+        hidden_size: !ref <encoder_dim>
+        num_layers: 2
+    linear: !new:speechbrain.nnet.linear.Linear
+        input_size: !ref <encoder_dim> * 2
+        n_neurons: !ref <encoder_dim>
+
+input_emb: !new:speechbrain.nnet.embedding.Embedding
+    num_embeddings: !ref <num_asr_tokens>
+    embedding_dim: !ref <emb_size>
+
+output_emb: !new:speechbrain.nnet.embedding.Embedding
+    num_embeddings: !ref <output_neurons>
+    embedding_dim: !ref <emb_size>
+
+dec: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
+    enc_dim: !ref <encoder_dim>
+    input_size: !ref <emb_size>
+    rnn_type: gru
+    attn_type: keyvalue
+    hidden_size: !ref <dec_neurons>
+    attn_dim: 512
+    num_layers: 3
+    scaling: 1.0
+    dropout: 0.0
+
+
 model: !new:torch.nn.ModuleList
-    - [!ref <slu_enc>, !ref <output_emb>,
-       !ref <dec>, !ref <seq_lin>]
+- [!ref <nlu_enc>, !ref <input_emb>, !ref <output_emb>,
+    !ref <dec>, !ref <seq_lin>]
+
+model_slu: !new:torch.nn.ModuleList
+    - [!ref <slu_enc>, !ref <output_emb_slu>,
+       !ref <dec_slu>, !ref <seq_lin_slu>]
 
 tokenizer: !new:sentencepiece.SentencePieceProcessor
 
@@ -137,9 +180,9 @@ pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
         tokenizer: !ref <tokenizer_file>
 
 beam_searcher: !new:speechbrain.decoders.S2SRNNBeamSearcher
-    embedding: !ref <output_emb>
-    decoder: !ref <dec>
-    linear: !ref <seq_lin>
+    embedding: !ref <output_emb_slu>
+    decoder: !ref <dec_slu>
+    linear: !ref <seq_lin_slu>
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>
     min_decode_ratio: !ref <min_decode_ratio>
@@ -171,7 +214,7 @@ lr_annealing_wav2vec2: !new:speechbrain.nnet.schedulers.NewBobScheduler
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>
     recoverables:
-        model: !ref <model>
+        model_slu: !ref <model_slu>
         wav2vec2: !ref <wav2vec2>
         scheduler: !ref <lr_annealing>
         lr_annealing_wav2vec2: !ref <lr_annealing_wav2vec2>

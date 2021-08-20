@@ -2,8 +2,8 @@
 """
 Recipe for "direct" (speech -> semantics) SLU with ASR-based transfer learning.
 
-We encode input waveforms into features using a model trained on LibriSpeech,
-then feed the features into a seq2seq model to map them to semantics.
+We encode input waveforms into features using a model_slu trained on LibriSpeech,
+then feed the features into a seq2seq model_slu to map them to semantics.
 
 (Adapted from the LibriSpeech seq2seq ASR recipe written by Ju-Chieh Chou, Mirco Ravanelli, Abdel Heba, and Peter Plantinga.)
 
@@ -43,11 +43,11 @@ class SLU(sb.Brain):
         # SLU forward pass
         
         encoder_out = self.hparams.slu_enc(wav2vec2_out)
-        e_in = self.hparams.output_emb(tokens_bos)
-        h, _ = self.hparams.dec(e_in, encoder_out, wav_lens)
+        e_in = self.hparams.output_emb_slu(tokens_bos)
+        h, _ = self.hparams.dec_slu(e_in, encoder_out, wav_lens)
 
         # Output layer for seq2seq log-probabilities
-        logits = self.hparams.seq_lin(h)
+        logits = self.hparams.seq_lin_slu(h)
         p_seq = self.hparams.log_softmax(logits)
 
         # Compute outputs
@@ -195,11 +195,11 @@ class SLU(sb.Brain):
             with open(self.hparams.wer_file, "w") as w:
                 self.wer_metric.write_stats(w)
     def init_optimizers(self):
-        "Initializes the wav2vec2 optimizer and model optimizer"
+        "Initializes the wav2vec2 optimizer and model_slu optimizer"
         self.wav2vec2_optimizer = self.hparams.wav2vec2_opt_class(
             self.modules.wav2vec2.parameters()
         )
-        self.optimizer = self.hparams.opt_class(self.hparams.model.parameters())
+        self.optimizer = self.hparams.opt_class(self.hparams.model_slu.parameters())
 
         if self.checkpointer is not None:
             self.checkpointer.add_recoverable(
