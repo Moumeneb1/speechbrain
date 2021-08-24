@@ -29,7 +29,11 @@ freeze_hubert_conv: True
 freeze_hubert: True
 
 
+pool  : !new:speechbrain.nnet.pooling.Pooling1d
+  pool_type : 'max'
+  kernel_size : 4
 
+  
 # Data files
 data_folder: !PLACEHOLDER # e.g, /localscratch/LibriSpeech
 # If RIRS_NOISES dir exists in /localscratch/xxx_corpus/RIRS_NOISES

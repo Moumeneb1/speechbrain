@@ -60,6 +60,8 @@ class ASR(sb.Brain):
         with torch.cuda.amp.autocast(): 
         #  encoder forward pass
             x = self.modules.hubert(wavs)
+            
+            x = self.hparams.pool(x)
             # Forward pass
             #feats = self.hparams.compute_features(wavs)
             #feats = self.modules.normalize(feats, wav_lens)
