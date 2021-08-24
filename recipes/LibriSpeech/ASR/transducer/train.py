@@ -54,77 +54,70 @@ class ASR(sb.Brain):
 
         # Add augmentation if specified
         if stage == sb.Stage.TRAIN:
-            if hasattr(self.modules, "env_corrupt"):
-                wavs_noise = self.modules.env_corrupt(wavs, wav_lens)
-                wavs = torch.cat([wavs, wavs_noise], dim=0)
-                wav_lens = torch.cat([wav_lens, wav_lens])
-                batch.sig = wavs, wav_lens
-                tokens_with_bos = torch.cat(
-                    [tokens_with_bos, tokens_with_bos], dim=0
-                )
-                token_with_bos_lens = torch.cat(
-                    [token_with_bos_lens, token_with_bos_lens]
-                )
-                batch.tokens_bos = tokens_with_bos, token_with_bos_lens
-            if hasattr(self.modules, "augmentation"):
-                wavs = self.modules.augmentation(wavs, wav_lens)
+            if hasattr(self.hparams, "augmentation"):
+                wavs = self.hparams.augmentation(wavs, wav_lens)
 
-        # Forward pass
-        feats = self.hparams.compute_features(wavs)
-        feats = self.modules.normalize(feats, wav_lens)
-        x = self.modules.enc(feats.detach())
-        e_in = self.modules.emb(tokens_with_bos)
-        h, _ = self.modules.dec(e_in)
-        # Joint network
-        # add labelseq_dim to the encoder tensor: [B,T,H_enc] => [B,T,1,H_enc]
-        # add timeseq_dim to the decoder tensor: [B,U,H_dec] => [B,1,U,H_dec]
-        joint = self.modules.Tjoint(x.unsqueeze(2), h.unsqueeze(1))
+        with torch.cuda.amp.autocast(): 
+        #  encoder forward pass
+            x = self.modules.hubert(wavs)
+            # Forward pass
+            #feats = self.hparams.compute_features(wavs)
+            #feats = self.modules.normalize(feats, wav_lens)
+            
+            #x = self.modules.enc(feats.detach())
+            
+            e_in = self.modules.emb(tokens_with_bos)
+            h, _ = self.modules.dec(e_in)
+            # Joint network
+            # add labelseq_dim to the encoder tensor: [B,T,H_enc] => [B,T,1,H_enc]
+            # add timeseq_dim to the decoder tensor: [B,U,H_dec] => [B,1,U,H_dec]
+            joint = self.modules.Tjoint(x.unsqueeze(2), h.unsqueeze(1))
 
-        # Output layer for transducer log-probabilities
-        logits = self.modules.transducer_lin(joint)
-        p_transducer = self.hparams.log_softmax(logits)
+            # Output layer for transducer log-probabilities
+            logits = self.modules.transducer_lin(joint)
+            p_transducer = self.hparams.log_softmax(logits)
 
-        # Compute outputs
-        if stage == sb.Stage.TRAIN:
-            return_CTC = False
-            return_CE = False
-            current_epoch = self.hparams.epoch_counter.current
-            if (
-                hasattr(self.hparams, "ctc_cost")
-                and current_epoch <= self.hparams.number_of_ctc_epochs
-            ):
-                return_CTC = True
-                # Output layer for ctc log-probabilities
-                out_ctc = self.modules.enc_lin(x)
-                p_ctc = self.hparams.log_softmax(out_ctc)
-            if (
-                hasattr(self.hparams, "ce_cost")
-                and current_epoch <= self.hparams.number_of_ce_epochs
-            ):
-                return_CE = True
-                # Output layer for ctc log-probabilities
-                p_ce = self.modules.dec_lin(h)
-                p_ce = self.hparams.log_softmax(p_ce)
-            if return_CE and return_CTC:
-                return p_ctc, p_ce, p_transducer, wav_lens
-            elif return_CTC:
-                return p_ctc, p_transducer, wav_lens
-            elif return_CE:
-                return p_ce, p_transducer, wav_lens
+            # Compute outputs
+            if stage == sb.Stage.TRAIN:
+                return_CTC = False
+                return_CE = False
+                current_epoch = self.hparams.epoch_counter.current
+                if (
+                    hasattr(self.hparams, "ctc_cost")
+                    and current_epoch <= self.hparams.number_of_ctc_epochs
+                ):
+                    return_CTC = True
+                    # Output layer for ctc log-probabilities
+                    out_ctc = self.modules.enc_lin(x)
+                    p_ctc = self.hparams.log_softmax(out_ctc)
+                if (
+                    hasattr(self.hparams, "ce_cost")
+                    and current_epoch <= self.hparams.number_of_ce_epochs
+                ):
+                    return_CE = True
+                    # Output layer for ctc log-probabilities
+                    p_ce = self.modules.dec_lin(h)
+                    p_ce = self.hparams.log_softmax(p_ce)
+                if return_CE and return_CTC:
+                    return p_ctc, p_ce, p_transducer, wav_lens
+                elif return_CTC:
+                    return p_ctc, p_transducer, wav_lens
+                elif return_CE:
+                    return p_ce, p_transducer, wav_lens
+                else:
+                    return p_transducer, wav_lens
+
+            elif stage == sb.Stage.VALID:
+                best_hyps, scores, _, _ = self.hparams.Greedysearcher(x)
+                return p_transducer, wav_lens, best_hyps
             else:
-                return p_transducer, wav_lens
-
-        elif stage == sb.Stage.VALID:
-            best_hyps, scores, _, _ = self.hparams.Greedysearcher(x)
-            return p_transducer, wav_lens, best_hyps
-        else:
-            (
-                best_hyps,
-                best_scores,
-                nbest_hyps,
-                nbest_scores,
-            ) = self.hparams.Beamsearcher(x)
-            return p_transducer, wav_lens, best_hyps
+                (
+                    best_hyps,
+                    best_scores,
+                    nbest_hyps,
+                    nbest_scores,
+                ) = self.hparams.Beamsearcher(x)
+                return p_transducer, wav_lens, best_hyps
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss (Transducer+(CTC+NLL)) given predictions and targets."""
