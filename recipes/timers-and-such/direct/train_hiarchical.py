@@ -54,7 +54,6 @@ class SLU(sb.Brain):
         e_intents_in = self.hparams.output_emb(tokens_intents_bos)
         e_slots_in = self.hparams.output_emb(tokens_slots_bos)
 
-<<<<<<< Updated upstream:recipes/timers-and-such/direct/train_hiarchical.py
         h_intent, weights_intent = self.hparams.dec_intent(e_intents_in, encoder_out, wav_lens)
         
         #wieght are vectors or shape [batch,number_of_tokens,timesteps]
@@ -67,13 +66,11 @@ class SLU(sb.Brain):
         h_slots, weights_slots = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens,context_intent=torch.mean(h_intent,dim=1))
         #print(encoder_out.shape,weights_slots.shape,h_slots.shape,wav_lens,wav2vec2_out.shape)
 
-=======
         h_intent, _ = self.hparams.dec_intent(
             e_intents_in, encoder_out, wav_lens
         )
         h_slots, _ = self.hparams.dec_slots(e_slots_in, encoder_out, wav_lens)
 
->>>>>>> Stashed changes:recipes/timers-and-such/direct/train_multihead_pred.py
         # Output layer for seq2seq log-probabilities
         logits_intent = self.hparams.seq_lin(h_intent)
 
@@ -91,13 +88,11 @@ class SLU(sb.Brain):
         ):
             return p_seq_intent, p_seq_slots, wav_lens
         else:
-<<<<<<< Updated upstream:recipes/timers-and-such/direct/train_hiarchical.py
             p_tokens_intent, scores_intent, context_intent = self.hparams.beam_searcher_intent(encoder_out, wav_lens)
             #print("intent context is",context_intent.shape)
             p_tokens_slots, scores_intent_slots = self.hparams.beam_searcher_slots(encoder_out, wav_lens,inflate_tensor(context_intent,80,dim=0))
 
             return p_seq_intent,p_seq_slots, wav_lens, p_tokens_intent, p_tokens_slots
-=======
             p_tokens_intent, scores_intent = self.hparams.beam_searcher_intent(
                 encoder_out, wav_lens
             )
@@ -113,7 +108,6 @@ class SLU(sb.Brain):
                 p_tokens_intent,
                 p_tokens_slots,
             )
->>>>>>> Stashed changes:recipes/timers-and-such/direct/train_multihead_pred.py
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss (NLL) given predictions and targets."""
@@ -187,11 +181,8 @@ class SLU(sb.Brain):
 
                 print("")
 
-<<<<<<< Updated upstream:recipes/timers-and-such/direct/train_hiarchical.py
 
-=======
             print(predicted_intents + target_intents)
->>>>>>> Stashed changes:recipes/timers-and-such/direct/train_multihead_pred.py
             if stage != sb.Stage.TRAIN:
                 self.wer_metric_intents.append(
                     ids, predicted_intents, target_intents

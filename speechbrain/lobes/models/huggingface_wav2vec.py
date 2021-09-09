@@ -17,7 +17,6 @@ from torch import nn
 try:
     from transformers import Wav2Vec2Model, Wav2Vec2Config
     from transformers import Wav2Vec2FeatureExtractor
-    from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 except ImportError:
     print("Please install transformer from HuggingFace to use wav2vec2!")
 
@@ -45,10 +44,16 @@ class HuggingFaceWav2Vec2(nn.Module):
     freeze : bool (default: True)
         If True, the model is frozen. If False, the model will be trained
         alongside with the rest of the pipeline.
+    freeze_feature_extractor :  bool (default: False)
+        When freeze = False and freeze_feature_extractor True, the featue_extractor module of the model is Frozen. If False
+        all the wav2vec model will be trained including featue_extractor module.
     pretrain : bool (default: True)
         If True, the model is pretrained with the specified source.
         If False, the randomly-initialized model is instantiated.
-
+    apply_spec_augment : bool (default: False)
+        If True, the model will apply spec augment on the output of feature extractor
+        (inside huggingface Wav2VecModel() class).
+        If False, the model will not apply spec augment. We set this to false to prevent from doing it twice.
     Example
     -------
     >>> inputs = torch.rand([10, 600])
@@ -61,7 +66,14 @@ class HuggingFaceWav2Vec2(nn.Module):
     """
 
     def __init__(
-        self, source, save_path, output_norm=True, freeze=True, pretrain=True
+        self,
+        source,
+        save_path,
+        output_norm=True,
+        freeze=True,
+        freeze_feature_extractor=False,
+        pretrain=True,
+        apply_spec_augment=False,
     ):
         super().__init__()
 
@@ -82,15 +94,21 @@ class HuggingFaceWav2Vec2(nn.Module):
                 source, cache_dir=save_path
             )
 
+        # set apply_spec_augment
+        self.model.config.apply_spec_augment = apply_spec_augment
+
         # We check if inputs need to be normalized w.r.t pretrained wav2vec2
         self.normalize_wav = self.feature_extractor.do_normalize
 
         self.freeze = freeze
+        self.freeze_feature_extractor = freeze_feature_extractor
         self.output_norm = output_norm
         if self.freeze:
             self.model.eval()
         else:
             self.model.train()
+            if self.freeze_feature_extractor:
+                self.model.feature_extractor._freeze_parameters()
 
     def forward(self, wav):
         """Takes an input waveform and return its corresponding wav2vec encoding.
@@ -128,85 +146,3 @@ class HuggingFaceWav2Vec2(nn.Module):
             out = F.layer_norm(out, out.shape)
 
         return out
-
-
-class HuggingFaceWav2Vec2ForCTC(nn.Module):
-    """This lobe enables the integration of HuggingFace
-    pretrained wav2vec2.0 with ASR head.
-
-    Source paper: https://arxiv.org/abs/2006.11477
-    Transformer from HuggingFace needs to be installed:
-    https://huggingface.co/transformers/installation.html
-
-    It will download automatically the model from HuggingFace.
-
-    Arguments
-    ---------
-    source : str
-        HuggingFace hub name: e.g "facebook/wav2vec2-base-960h"
-    save_path : str
-        Path (dir) of the downloaded model.
-    """
-
-    def __init__(
-        self, source, save_path,
-    ):
-        super().__init__()
-
-        # Download the processor from HuggingFace.
-        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
-            source, cache_dir=save_path
-        )
-
-        # Download the model from HuggingFace.
-
-        self.model = Wav2Vec2ForCTC.from_pretrained(source, cache_dir=save_path)
-
-        # We check if inputs need to be normalized w.r.t pretrained wav2vec2
-        self.normalize_wav = self.feature_extractor.do_normalize
-
-    def forward(self, wav):
-        """Takes an input waveform and return its corresponding wav2vec encoding.
-
-        Arguments
-        ---------
-        wav : torch.Tensor (signal)
-            A batch of audio signals to transform to features.
-
-        Returns
-        -------
-        asr_tokens :  torch.Tensor
-            Wav2vec ASR tokens corresponding to a wav
-        """
-
-        if self.normalize_wav:
-            wav = F.layer_norm(wav, wav.shape)
-
-        # Extract wav2vec output
-        logits = self.model(wav).logits
-        asr_tokens = torch.argmax(logits, dim=-1).tolist()
-
-        return asr_tokens
-
-
-class HuggingFacWave2vec2Processor:
-    def __init__(self, source, save_path):
-        super(HuggingFacWave2vec2Processor, self).__init__()
-        self.processor = Wav2Vec2Processor.from_pretrained(
-            source, cache_dir=save_path
-        )
-
-    def batch_decode(self, batch):
-        """Decoding wav2vec2 tokens to correspanding text
-
-        Arguments
-        ---------
-        batch : List(str)
-            Batch of strings to be tokenize
-
-        Returns
-        -------
-        transcriptions : List(str)
-            return a list of transcriptions
-        """
-        return self.processor.batch_decode(batch)
