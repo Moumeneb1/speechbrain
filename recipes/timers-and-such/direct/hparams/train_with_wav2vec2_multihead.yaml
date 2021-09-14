@@ -117,7 +117,11 @@ dec_slots: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     scaling: 1.0
     dropout: 0.0
 
-seq_lin: !new:speechbrain.nnet.linear.Linear
+seq_lin_slots: !new:speechbrain.nnet.linear.Linear
+    input_size: !ref <dec_neurons>
+    n_neurons: !ref <output_neurons>
+
+seq_lin_intents: !new:speechbrain.nnet.linear.Linear
     input_size: !ref <dec_neurons>
     n_neurons: !ref <output_neurons>
 
@@ -127,10 +131,11 @@ modules:
     output_emb: !ref <output_emb>
     dec_intent: !ref <dec_intent>
     dec_slots: !ref <dec_slots>
-    seq_lin: !ref <seq_lin>
+    seq_lin_slots: !ref <seq_lin_slots>
+    seq_lin_intents : !ref <seq_lin_intents>
 
 model: !new:torch.nn.ModuleList
-    - [!ref <slu_enc>, !ref <output_emb>, !ref <dec_intent>, !ref <dec_slots>, !ref <seq_lin>]
+    - [!ref <slu_enc>, !ref <output_emb>, !ref <dec_intent>, !ref <dec_slots>, !ref <seq_lin_slots> ,!ref <seq_lin_intents>]
 
 tokenizer: !new:sentencepiece.SentencePieceProcessor
 
@@ -144,7 +149,7 @@ pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
 beam_searcher_intent: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <output_emb>
     decoder: !ref <dec_intent>
-    linear: !ref <seq_lin>
+    linear: !ref <seq_lin_intents>
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>
     min_decode_ratio: !ref <min_decode_ratio>
@@ -159,7 +164,7 @@ beam_searcher_intent: !new:speechbrain.decoders.S2SRNNBeamSearcher
 beam_searcher_slots: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <output_emb>
     decoder: !ref <dec_slots>
-    linear: !ref <seq_lin>
+    linear: !ref <seq_lin_slots>
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>
     min_decode_ratio: !ref <min_decode_ratio>

@@ -54,8 +54,8 @@ class SLU(sb.Brain):
 
 
         # Output layer for seq2seq log-probabilities
-        logits_intent = self.hparams.seq_lin(h_intent)
-        logits_slots = self.hparams.seq_lin(h_slots)
+        logits_intent = self.hparams.seq_lin_intents(h_intent)
+        logits_slots = self.hparams.seq_lin_slots(h_slots)
 
 
         p_seq_intent = self.hparams.log_softmax(logits_intent)
