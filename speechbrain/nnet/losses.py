@@ -561,6 +561,57 @@ def kldiv_loss(
         return nll_loss(log_probabilities, targets, length, reduction=reduction)
 
 
+def kldiv_loss_moumene(
+    log_probabilities,
+    true_distribution,
+    length=None,
+    label_smoothing=0.0,
+    allowed_len_diff=3,
+    pad_idx=0,
+    reduction="mean",
+):
+    """Computes the KL-divergence error at the batch level.
+    This loss applies label smoothing directly to the targets
+
+    Arguments
+    ---------
+    probabilities : torch.Tensor
+        The posterior probabilities of shape
+        [batch, prob] or [batch, frames, prob].
+    targets : torch.Tensor
+        The targets, of shape [batch] or [batch, frames].
+    length : torch.Tensor
+        Length of each utterance, if frame-level loss is desired.
+    allowed_len_diff : int
+        Length difference that will be tolerated before raising an exception.
+    reduction : str
+        Options are 'mean', 'batch', 'batchmean', 'sum'.
+        See pytorch for 'mean', 'sum'. The 'batch' option returns
+        one loss per item in the batch, 'batchmean' returns sum / batch size.
+
+    Example
+    -------
+    >>> probs = torch.tensor([[0.9, 0.1], [0.1, 0.9]])
+    >>> kldiv_loss(torch.log(probs), torch.tensor([1, 1]))
+    tensor(1.2040)
+    """
+    loss = torch.nn.functional.kl_div(
+        log_probabilities, true_distribution, reduction="none"
+    )
+
+    # return loss according to reduction specified
+    if reduction == "mean":
+        return loss.sum().mean()
+    elif reduction == "batchmean":
+        return loss.sum() / bz
+    elif reduction == "batch":
+        return loss.view(bz, -1).sum(1) / length
+    elif reduction == "sum":
+        return loss.sum()
+    else:
+        return loss
+
+
 def truncate(predictions, targets, allowed_len_diff=3):
     """Ensure that predictions and targets are the same length.
 
