@@ -22,10 +22,11 @@ dev_tsv_file: !ref <data_folder>/dev.tsv  # Standard CommonVoice .tsv files
 test_tsv_file: !ref <data_folder>/test.tsv  # Standard CommonVoice .tsv files
 accented_letters: True
 language: fr # use 'it' for Italian, 'rw' for Kinyarwanda, 'en' for english
-train_csv: !ref <save_folder>/train.csv
-valid_csv: !ref <save_folder>/dev.csv
-test_csv: !ref <save_folder>/test.csv
-skip_prep: False # Skip data preparation
+train_csv: /sb_data/asr_train_data/Boursorama_Train/train.csv 
+valid_csv: /sb_data/Tst/test.csv 
+test_csv: /sb_data/Tst/test.csv 
+
+skip_prep: True # Skip data preparation
 
 # We remove utterance slonger than 10s in the train/dev/test sets as
 # longer sentences certainly correspond to "open microphones".
@@ -33,7 +34,7 @@ avoid_if_longer_than: 10.0
 
 # Training parameters
 number_of_epochs: 30
-number_of_ctc_epochs: 15
+number_of_ctc_epochs: 30
 lr: 1.0
 lr_wav2vec: 0.0001
 ctc_weight: 0.3
@@ -42,11 +43,16 @@ auto_mix_prec: False
 sample_rate: 16000
 ckpt_interval_minutes: 30 # save checkpoint every N min
 
+
+
+#loading tokenizer 
+tokenizer: !new:sentencepiece.SentencePieceProcessor
+
 # With data_parallel batch_size is split into N jobs
 # With DDP batch_size is multiplied by N jobs
 # Must be 6 per GPU to fit 16GB of VRAM
-batch_size: 12
-test_batch_size: 4
+batch_size: 10
+test_batch_size: 128
 
 dataloader_options:
     batch_size: !ref <batch_size>
@@ -123,7 +129,7 @@ wav2vec2: !new:speechbrain.lobes.models.huggingface_wav2vec.HuggingFaceWav2Vec2
     save_path: !ref <save_folder>/wav2vec2_checkpoint
 
 #####
-# Uncomment this block if you prefer to use a Fairseq pretrained model instead
+# Uncomment this block if you prefer top use a Fairseq pretrained model instead
 # of a HuggingFace one. Here, we provide an URL that is obtained from the
 # Fairseq github for the multilingual XLSR.
 #
@@ -174,14 +180,27 @@ lr_annealing_wav2vec: !new:speechbrain.nnet.schedulers.NewBobScheduler
     annealing_factor: 0.9
     patient: 0
 
+
+pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
+    loadables:
+        wav2vec2: !ref <wav2vec2>
+        model: !ref <model>
+        tokenizer: !ref <tokenizer>
+    paths: 
+        wav2vec2: /workspace/speechbrain_via/speechbrain/recipes/CommonVoice/ASR/CTC/savables/wav2vec2.ckpt
+        model : /workspace/speechbrain_via/speechbrain/recipes/CommonVoice/ASR/CTC/savables/asr.ckpt
+        tokenizer: !ref /workspace/speechbrain_via/speechbrain/recipes/CommonVoice/ASR/CTC/savables/tokenizer.ckpt
+
+
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
-    checkpoints_dir: !ref <save_folder>
+    checkpoints_dir: !ref speechbrain/asr-wav2vec2-commonvoice-fr
     recoverables:
         wav2vec2: !ref <wav2vec2>
         model: !ref <model>
         scheduler_model: !ref <lr_annealing_model>
         scheduler_wav2vec: !ref <lr_annealing_wav2vec>
         counter: !ref <epoch_counter>
+
 
 train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
     save_file: !ref <train_log>

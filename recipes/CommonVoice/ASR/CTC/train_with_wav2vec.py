@@ -8,6 +8,7 @@ from hyperpyyaml import load_hyperpyyaml
 from speechbrain.tokenizers.SentencePiece import SentencePiece
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.distributed import run_on_main
+from speechbrain.pretrained import EncoderASR
 
 """Recipe for training a sequence-to-sequence ASR system with CommonVoice.
 The system employs a wav2vec2 encoder and a CTC decoder.
@@ -75,11 +76,15 @@ class ASR(sb.core.Brain):
                 p_ctc, wav_lens, blank_id=self.hparams.blank_index
             )
 
-            predicted_words = self.tokenizer(sequence, task="decode_from_list")
-
+            # predicted_words = self.tokenizer(sequence, task="decode_from_list")
+            predicted_words = [self.tokenizer.decode_ids(utt_seq).split(" ")
+                for utt_seq in sequence
+            ]
             # Convert indices to words
             target_words = undo_padding(tokens, tokens_lens)
-            target_words = self.tokenizer(target_words, task="decode_from_list")
+            target_words  = [self.tokenizer.decode_ids(utt_seq).split(" ")
+                for utt_seq in target_words
+            ]
 
             self.wer_metric.append(ids, predicted_words, target_words)
             self.cer_metric.append(ids, predicted_words, target_words)
@@ -252,6 +257,8 @@ def dataio_prepare(hparams, tokenizer):
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
         info = torchaudio.info(wav)
+        # w = hparams['extractor'].load_audio(wav)
+        # print(w)
         sig = sb.dataio.dataio.read_audio(wav)
         resampled = torchaudio.transforms.Resample(
             info.sample_rate, hparams["sample_rate"],
@@ -266,7 +273,7 @@ def dataio_prepare(hparams, tokenizer):
         "tokens_list", "tokens_bos", "tokens_eos", "tokens"
     )
     def text_pipeline(wrd):
-        tokens_list = tokenizer.sp.encode_as_ids(wrd)
+        tokens_list = hparams["tokenizer"].encode_as_ids(wrd.upper())
         yield tokens_list
         tokens_bos = torch.LongTensor([hparams["bos_index"]] + (tokens_list))
         yield tokens_bos
@@ -321,17 +328,18 @@ if __name__ == "__main__":
     )
 
     # Defining tokenizer and loading it
-    tokenizer = SentencePiece(
-        model_dir=hparams["save_folder"],
-        vocab_size=hparams["output_neurons"],
-        annotation_train=hparams["train_csv"],
-        annotation_read="wrd",
-        model_type=hparams["token_type"],
-        character_coverage=hparams["character_coverage"],
-    )
+
+
 
     # Create the datasets objects as well as tokenization and encoding :-D
+
+    run_on_main(hparams["pretrainer"].collect_files)
+    hparams["pretrainer"].load_collected(device=run_opts["device"])
+    # hparams['extractor'] = EncoderASR.from_hparams(source="speechbrain/asr-wav2vec2-commonvoice-fr", savedir="/home/Moumene/pretrained_models/asr-wav2vec2-commonvoice-fr")
+    tokenizer = hparams["tokenizer"]
+
     train_data, valid_data, test_data = dataio_prepare(hparams, tokenizer)
+
 
     # Trainer initialization
     asr_brain = ASR(
@@ -344,13 +352,12 @@ if __name__ == "__main__":
     # Adding objects to trainer.
     asr_brain.tokenizer = tokenizer
 
-    # Training
     asr_brain.fit(
-        asr_brain.hparams.epoch_counter,
-        train_data,
-        valid_data,
-        train_loader_kwargs=hparams["dataloader_options"],
-        valid_loader_kwargs=hparams["test_dataloader_options"],
+         asr_brain.hparams.epoch_counter,
+         train_data,
+         valid_data,
+         train_loader_kwargs=hparams["dataloader_options"],
+         valid_loader_kwargs=hparams["test_dataloader_options"],
     )
 
     # Test
